@@ -1,0 +1,48 @@
+---
+title: "Data Cleaning"
+author: "Muhammad Auwali Ikhsani - Anastasya Dian Irawati"
+date: "2022-12-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library buat Data Cleaning
+```{r}
+library(tm) 
+library(vroom)
+library(here)
+```
+
+# Proses Cleaning Teks
+```{r}
+data <- vroom(here('covids.csv'))
+ulasan <- data$translated
+
+ulasan <- Corpus(VectorSource(ulasan))
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+reviewclean <- tm_map(ulasan, removeURL)
+removeNL <- function(y) gsub("\n", " ", y)
+reviewclean <- tm_map(reviewclean, removeNL)
+replacecomma <- function(y) gsub(",", "", y)
+reviewclean <- tm_map(reviewclean, replacecomma)
+removetitik2 <- function(y) gsub(":", "", y)
+reviewclean <- tm_map(reviewclean, removetitik2)
+removetitikkoma <- function(y) gsub(";", " ", y)
+reviewclean <- tm_map(reviewclean, removetitikkoma)
+removeamp <- function(y) gsub("&amp", "", y)
+reviewclean <- tm_map(reviewclean, removeamp)
+removeUN <- function(z) gsub("@\\w+", "", z)
+reviewclean <- tm_map(reviewclean, removeUN)
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+reviewclean <- tm_map(reviewclean, remove.all)
+reviewclean <- tm_map(reviewclean, removePunctuation)
+reviewclean <- tm_map(reviewclean, tolower)
+reviewclean <- tm_map(reviewclean, stripWhitespace)
+
+dataframe <- data.frame(text=unlist(sapply(reviewclean,`[`)),stringsAsFactors = F)
+write.csv(dataframe,file = 'covids_clean.csv')
+View(dataframe)
+```

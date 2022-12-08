@@ -1,0 +1,242 @@
+---
+title: "Sentiment Analisis"
+author: "Muhammad Auwali Ikhsani - Anastasya Dian Irawati"
+date: "2022-12-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library yang digunakan
+```{r }
+library(tm)
+library(wordcloud2)
+library(vroom)
+library(here)
+library(RTextTools)
+library(dplyr)
+library(wordcloud)
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(e1071)
+library(caret) 
+library(syuzhet)
+library(tidymodels)
+```
+
+# Proses pelabelan
+```{r}
+
+kalimat2<-read.csv("covids_clean.csv",header=TRUE)
+#skoring
+kata.positif <- scan("positive-words.txt",what="character",comment.char=";")
+kata.negatif <- scan("negative-words.txt",what="character",comment.char=";")
+score.sentiment = function(kalimat2, kata.positif, kata.negatif,
+                           .progress='none')
+{
+  require(plyr)
+  require(stringr)
+  scores = laply(kalimat2, function(kalimat, kata.positif,
+                                    kata.negatif) {
+    kalimat = gsub('[[:punct:]]', '', kalimat)
+    kalimat = gsub('[[:cntrl:]]', '', kalimat)
+    kalimat = gsub('\\d+', '', kalimat)
+    kalimat = tolower(kalimat)
+    list.kata = str_split(kalimat, '\\s+')
+    kata2 = unlist(list.kata)
+    positif.matches = match(kata2, kata.positif)
+    negatif.matches = match(kata2, kata.negatif)
+    positif.matches = !is.na(positif.matches)
+    negatif.matches = !is.na(negatif.matches)
+    score = sum(positif.matches) - (sum(negatif.matches))
+    return(score)
+  }, kata.positif, kata.negatif, .progress=.progress )
+  scores.df = data.frame(score=scores, text=kalimat2)
+  return(scores.df)}
+hasil = score.sentiment(kalimat2$text, kata.positif, kata.negatif)
+#mengubah nilai score menjadi sentimen
+hasil$klasifikasi<- ifelse(hasil$score<0, "Negatif","Positif")
+hasil$score <- ifelse(hasil$score<0, "0", "1")
+
+write.csv(hasil, file = "datalabel.csv")
+# mengubah score menjadi faktor
+hasil$score <- as.factor(hasil$score)
+
+set.seed(16090)
+hasil <- hasil[sample(nrow(hasil)),]
+hasil <- hasil[sample(nrow(hasil)),]
+glimpse(hasil)
+```
+
+# Membentuk Document Term Matrix
+```{r}
+corpus <- Corpus(VectorSource(hasil$text))
+corpus
+inspect(corpus[1:10])
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, stopwords(kind = "en")) %>%
+  tm_map(stripWhitespace)
+
+dtm <- DocumentTermMatrix(corpus_clean)
+inspect(dtm[20:30, 20:30])
+```
+
+# Membagi data train dan data test
+```{r}
+data_split <- initial_split(hasil) #untuk mengetahui jumlah data train dan data test
+data_split
+
+data_train <- hasil[1:2250,]
+data_test <- hasil[2250:3001,]
+
+dtm_train <- dtm[1:2250,]
+dtm_test <- dtm[2250:3001,]
+
+# cc = corpus clean
+cc_train <- corpus_clean[1:2250]
+cc_test <- corpus_clean[2250:3001]
+```
+# Seleksi Feature
+```{r}
+dim(dtm_train)
+
+# menyeleksi feature sehingga yg diambil adalah kata yang muncul setidaknya 75 kali
+word_freq <- findFreqTerms(dtm_train,75)
+
+length(word_freq)
+
+# menyesuaikan fitur pada data train dan test dengan fitur yg sudah diseleksi
+dtm_train_a <- cc_train %>%
+  DocumentTermMatrix(control = list(dictionary = word_freq))
+
+dtm_test_a <- cc_test %>%
+  DocumentTermMatrix(control = list(dictionary = word_freq))
+
+dim(dtm_train_a)
+dim(dtm_test_a)
+```
+
+```{r}
+convert <- function(x) {
+  y <- ifelse(x>0, 1, 0)
+  y <- factor(y)
+  y
+}
+train_b <- apply(dtm_train_a, 2, convert)
+test_b <- apply(dtm_test_a, 2, convert)
+
+glimpse(train_b)
+length(train_b)
+```
+
+# Model Naive Bayes
+```{r}
+# membuat model naive bayes
+classifier <- naiveBayes(train_b, data_train$score, laplace = 1)
+
+# menyimpan model untuk aplikasi
+save(classifier, file = "NaiveBayesClassifier.rda")
+
+# test model naive bayes
+prediksi <- predict(classifier, test_b)
+
+# membuat tabel hasil prediksi
+table("Prediksi" = prediksi, "Asli" = data_test$score)
+
+# mengecek akurasi
+conf <- confusionMatrix(prediksi, data_test$score)
+conf$overall['Accuracy']
+```
+
+# barplot
+```{r}
+d<-read.csv("covids_clean.csv",stringsAsFactors = FALSE) 
+#merubah text menjadi char 
+review <-as.character(d$text) 
+
+s <- get_nrc_sentiment(review, cl = NULL, language = "english", lowercase = TRUE)
+
+#klasifikasi data
+review_combine<-cbind(d$text,s)
+par(mar=rep(3,4))
+a<- barplot(colSums(s),col=rainbow(10), xlab ='emotion', ylab='count',main='Sentiment Analysis')
+barplt <- a
+```
+
+# wordcloud
+```{r}
+library(dplyr)
+library(wordcloud2)
+
+data1 <- read.csv('covids_clean.csv')
+text <- data1$text
+docs <- Corpus(VectorSource(text))
+docs <- tm_map(docs, removeWords, c("ent", "ents","the"))
+
+dtm <- TermDocumentMatrix(docs) 
+matrix <- as.matrix(dtm) 
+words <- sort(rowSums(matrix),decreasing=TRUE) 
+df <- data.frame(word = names(words),freq=words)
+
+wc <- wordcloud2(data=df, size=1.6, color='random-dark')
+wc
+```
+
+# ui
+```{r}
+#shiny
+#membuka file csv
+dataLabel<- read.csv("datalabel.csv")
+dataLabel <- dataLabel %>% select(score, text, klasifikasi)
+#mengatur tampilan web
+ui <- fluidPage(
+   titlePanel("Analisis Sentimen Cuitan Twitter tentang Pandemi Covid 19 dengan Metode Naive Bayes"), #membuat judul
+    # Show a plot of the generated distribution
+   mainPanel(#tab
+    #plot output : untuk scatterplot
+            tabsetPanel(type = "tabs",
+                         tabPanel("Confussion Matrix and Statistic", verbatimTextOutput("result")),
+                        #tab data cleaning
+                        tabPanel("List sentiment", DT::dataTableOutput('tbl1')),
+                        #tab scatterplot/grafik
+                        tabPanel("Histogram", plotOutput("scatterplot")), 
+                        # tab wordcloud
+                        tabPanel("Wordcloud", wordcloud2Output("WordCloud2")),
+            )
+   )
+    
+)
+```
+
+#web
+```{r}
+#tempat data akan dianalisis dan diproses, hasilnya ditampilkan/diplotkan pada bagian mainpanel() ui
+server <- function(input, output) {
+  #output Data
+  output$result <-renderPrint({
+      conf
+  })
+  #data ditampilkan dalam beberapa halaman
+  #data cleaning
+  output$tbl1 = DT::renderDataTable({
+        DT::datatable(dataLabel, options = list(lengthChange = FALSE))
+  })
+  
+  #barplot
+  output$scatterplot <- renderPlot({
+    barplot(colSums(s), col=rainbow(10), ylab='count',main='Sentiment Analysis')
+  }, height = 400)
+  
+  #wordcloud
+  output$WordCloud2 <- renderWordcloud2({
+    wc
+  })
+}
+shinyApp(ui = ui, server = server)
+```
